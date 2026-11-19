@@ -1,3 +1,4 @@
+import { getAstFromCodeblock } from '@onlook/parser';
 import { ChatType, type DomElement } from '@onlook/models';
 import {
     MessageContextType,
@@ -244,6 +245,30 @@ export class ChatContext {
         }
 
         return highlightedContext;
+    }
+
+    async clientText(oid: string, branchId: string) {
+        const highlight = await this.getHighlightContextById(oid, '', false, branchId);
+        if (!highlight) return null;
+        const element = getAstFromCodeblock(highlight.content);
+        const child = element?.children[0];
+        if (element?.children.length !== 1 || child?.type !== 'JSXText') return null;
+        const text = child.value.replace(/\s+/g, ' ').trim();
+        return text && text.length <= 2500 ? { ...highlight, displayName: text } : null;
+    }
+
+    async clientPageContext(frame: FrameData, path: string, highlight: HighlightMessageContext | null) {
+        const branch = this.getBranchContext([], [frame])[0];
+        if (!branch) throw new Error('Missing page branch');
+        const checkpoint = this.editorEngine.branches.getBranchDataById(frame.frame.branchId)?.sandbox.gitManager.commits?.[0]?.oid;
+        branch.clientPage = {
+            projectId: this.editorEngine.projectId, path, checkpoint,
+            selection: highlight?.oid ? {
+                oid: highlight.oid, text: highlight.displayName, sourcePath: highlight.path,
+                start: highlight.start, end: highlight.end,
+            } : undefined,
+        };
+        return [branch, ...(highlight ? [highlight] : []), ...await this.getAgentRuleContext()];
     }
 
     private async getHighlightContextById(

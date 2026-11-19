@@ -31,7 +31,20 @@ export default {async fetch(request,env){
       const key=url.searchParams.get('key')||'';
       if(route==='api/preview'&&!/^[\da-f-]{36}$/i.test(key))fail('Invalid preview request.');
       const script=route==='api/preview'?ASSETS.frame.replace('location.hash.slice(1)',JSON.stringify(key)):'';
-      const document=s.format==='bakery'?bakeryDocument(s,v,script):pageDoc(s,v,{style:ASSETS.pageCss,asset:'',script});
+      let document=s.format==='bakery'?bakeryDocument(s,v,script):pageDoc(s,v,{style:ASSETS.pageCss,asset:'',script});
+      if(route==='saved'){
+        const oid=url.searchParams.get('element');
+        const matches=oid?v.items.filter(item=>item.id===oid):[];
+        const marker=oid?'data-oid="'+esc(oid)+'"':'';
+        const unique=matches.length===1 && document.split(marker).length===2;
+        if(unique){
+          document=document.replace(marker,'id="selected-text" '+marker)
+            .replace('</head>','<style>#selected-text{outline:3px solid #148373;outline-offset:4px;scroll-margin-top:4rem}</style></head>');
+        }
+        const message=oid && !unique?' · The selected text moved. Showing the whole page.':'';
+        const banner='<aside style="padding:10px 16px;background:#164c3e;color:white;font:14px system-ui">Saved preview · Version '+v.n+message+'</aside>';
+        document=document.replace('<body>','<body>'+banner);
+      }
       return html(document,route==='api/export'?{'content-disposition':'attachment; filename="'+s.id+'-v'+v.n+'.html"'}:{})
     }
     return json({error:'Method unavailable.'},405)

@@ -1,3 +1,4 @@
+import { clientPicker } from './client-picker';
 import { buildLayerTree, processDom, type ProcessDomResult } from './dom';
 import {
     getChildrenCount,
@@ -40,6 +41,7 @@ function withTryCatch<T extends (...args: any[]) => any>(fn: T): T {
 }
 
 const rawMethods = {
+    clientPicker,
     // Misc
     processDom,
     setFrameId,

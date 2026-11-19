@@ -19,13 +19,19 @@ export function initial(now){return {serial:0,receipts:[],sites:[newSite('grunje
 export const revision=(s,n)=>s.versions.find(v=>v.n===n);
 export function differences(a,b){return b.items.filter(f=>a.items.find(i=>i.id===f.id)?.text!==f.text).map(f=>({label:f.label,id:f.id,before:a.items.find(i=>i.id===f.id)?.text??'',after:f.text}))}
 function pickTarget(s,body,items){
-  if(body.target){const t=items.find(f=>f.id===body.target);if(!t)fail('That selection has moved. Choose the text again.',409);return t}
+  if (body.scope && !['element', 'page'].includes(body.scope)) fail('Choose a request scope.');
+  if (body.scope === 'page' && body.target) fail('A whole-page request cannot carry an element.');
+  if (body.target || body.scope === 'element') {
+    const matches = items.filter(item => item.id === body.target);
+    if (matches.length !== 1) fail('That selection has moved. Select the text again or use the whole page.', 409);
+    return matches[0];
+  }
   const raw=body.text.toLowerCase();
   const match=items.filter(f=>raw.includes(f.text.toLowerCase()) || raw.includes(f.label.toLowerCase()));
   if(match.length===1)return match[0];
   const role=/\b(headline|hero heading|page title)\b/i.test(raw)?items.find(f=>f.id==='title'||f.tag==='h1'):null;
   if(role)return role;
-  return items.find(f=>f.id===(s.question?.target||s.lastTarget));
+  return body.scope === 'page' ? null : items.find(f=>f.id===(s.question?.target||s.lastTarget));
 }
 export function replacement(note,old,exact=false) {
   const t=note.trim();
@@ -59,20 +65,49 @@ export function transact(original,a,now=new Date().toISOString(),readSource){
   }else{
     const s=state.sites.find(site=>site.id===a.site);if(!s)fail('Website not found.',404);
     const head=revision(s,s.head),live=revision(s,s.live);
-    const say=(who,text,target=null)=>s.messages.push({who,text,at:now,target});
+    const say=(who,text,target=null,context)=>s.messages.push({who,text,at:now,target,...(context && {context})});
     if(a.type==='edit'){
       if(!checkString(a.text,2500))fail('Write a change in 2,500 characters or less.');
       if(s.messages.length>=600)fail('This pilot conversation is full. Export your page or start a new website.');
-      const t=pickTarget(s,a,head.items);
-      const next=t?replacement(a.text,t.text,Boolean(a.exact)||(s.question?.kind==='words'&&t.id===s.question.target)):null;
-      say('you',a.text,t?.id??null);
-      if(!t){s.question={kind:'target',note:a.text,target:null};say('desk','Which text should change? Click it in the preview, then send the replacement wording.')}
-      else if(!next){s.lastTarget=t.id;s.question={kind:'words',target:t.id};say('desk','What exact wording should replace “'+t.text+'”? Type it below.',t.id)}
-      else if(next===t.text){s.question=null;say('desk','That wording already appears in the preview.',t.id)}
-      else{
-        const n=s.versions.length+1,items=head.items.map(f=>f.id===t.id?{...f,text:next}:f);
-        s.versions.push({n,at:now,base:s.live,items,target:t.id,summary:t.label+' updated'});s.head=n;s.reviewed=null;s.lastTarget=t.id;s.question=null;
-        say('desk','Version '+n+' is ready. Review the change beside your page.',t.id)
+      const target = pickTarget(s, a, head.items);
+      const pageScope = a.scope === 'page' || (!a.scope && !target);
+      const index = target ? head.items.indexOf(target) : -1;
+      const section = head.items.slice(0, index + 1).reverse().find(item => /^h[1-3]$/.test(item.tag));
+      say('you', a.text, pageScope ? null : target.id, {
+        site: s.id, page: '/', revision: head.n, scope: pageScope ? 'page' : 'element',
+        ...(pageScope ? {} : { oid: target.id, label: target.label, text: target.text, section: section?.text }),
+      });
+      const pageReplace = pageScope && a.text.trim().match(/^replace\s+["“]([^"”]+)["”]\s+with\s+["“]([^"”]+)["”](?:\s+(?:across (?:the )?(?:whole )?page|everywhere))?[.!]?$/i);
+      let items;
+      if (pageReplace) {
+        const [, before, after] = pageReplace;
+        items = head.items.map(item => ({...item, text: item.text.split(before).join(after)}));
+        if (items.some(item => item.text.length > 2500)) fail('Shorten the replacement wording.');
+      } else if (target) {
+        const answering = s.question?.kind === 'words' && s.question.target === target.id && !pageScope;
+        const next = replacement(a.text, target.text, Boolean(a.exact) || answering);
+        if (next) items = head.items.map(item => item.id === target.id ? {...item, text: next} : item);
+      }
+      if (pageScope) s.lastTarget = null;
+      if (items) {
+        s.question = null;
+        const changed = differences(head, {items});
+        if (changed.length) {
+          const n = s.versions.length + 1;
+          const oid = !pageScope && target ? target.id : null;
+          s.versions.push({n, at: now, base: s.live, items, target: oid, summary: changed.length === 1 ? changed[0].label + ' updated' : changed.length + ' text blocks updated'});
+          s.head = n;
+          s.reviewed = null;
+          s.lastTarget = oid;
+          say('desk', 'Version ' + n + ' is ready to review.', oid);
+        } else say('desk', pageReplace ? 'The preview already matches, or the original wording was not found.' : 'That wording already appears in the preview.');
+      } else if (target && !pageScope) {
+        s.lastTarget = target.id;
+        s.question = {kind:'words', target:target.id};
+        say('desk', 'What exact wording should replace “' + target.text + '”?', target.id);
+      } else {
+        s.question = {kind:'target', note:a.text, target:null};
+        say('desk', 'Which text should change? Select it in the preview, or write Replace “old text” with “new text” for the whole page.');
       }
     }else if(a.type==='review'){
       if(a.version!==s.head||s.head===s.live||head.base!==s.live)fail('Open the latest private preview before reviewing.',409);

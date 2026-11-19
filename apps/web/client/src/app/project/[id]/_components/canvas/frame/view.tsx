@@ -52,6 +52,7 @@ const createSafeFallbackMethods = (): PromisifiedPendpalChildMethods => {
 };
 
 interface FrameViewProps extends IframeHTMLAttributes<HTMLIFrameElement> {
+    onClientPick?: (oid: string | null) => void;
     frame: Frame;
     reloadIframe: () => void;
     onConnectionFailed: () => void;
@@ -65,6 +66,7 @@ export const FrameComponent = observer(
         (
             {
                 frame,
+                onClientPick,
                 reloadIframe,
                 onConnectionFailed,
                 onConnectionSuccess,
@@ -77,6 +79,8 @@ export const FrameComponent = observer(
             const { popover, ...props } = restProps;
             const editorEngine = useEditorEngine();
             const iframeRef = useRef<HTMLIFrameElement>(null);
+            const pickRef = useRef(onClientPick);
+            pickRef.current = onClientPick;
             const zoomLevel = useRef(1);
             const isConnecting = useRef(false);
             const connectionRef = useRef<ReturnType<typeof connect> | null>(null);
@@ -114,6 +118,7 @@ export const FrameComponent = observer(
                     const connection = connect({
                         messenger,
                         methods: {
+                            onClientPick: (oid) => pickRef.current?.(oid),
                             getFrameId: () => frame.id,
                             getBranchId: () => frame.branchId,
                             onWindowMutated: () => {
@@ -205,6 +210,7 @@ export const FrameComponent = observer(
                 }
 
                 return {
+                    clientPicker: promisifyMethod(penpalChild?.clientPicker),
                     processDom: promisifyMethod(penpalChild?.processDom),
                     getElementAtLoc: promisifyMethod(penpalChild?.getElementAtLoc),
                     getElementByDomId: promisifyMethod(penpalChild?.getElementByDomId),

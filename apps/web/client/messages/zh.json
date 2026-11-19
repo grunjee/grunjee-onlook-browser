@@ -1,4 +1,19 @@
 {
+    "clientDesk": {
+        "loading": "正在打开网站…",
+        "failure": "未能完成请求。",
+        "hint": "点击预览中的文字，或描述对整个页面的更改。",
+        "moved": "请重新选择文字或使用整个页面。",
+        "clear": "使用整个页面",
+        "whole": "整个页面",
+        "conversation": "对话",
+        "you": "你",
+        "working": "正在准备更改…",
+        "send": "发送",
+        "preview": "私密预览",
+        "compose": "描述更改",
+        "unavailable": "正在连接文字选择工具…"
+    },
     "projects": {
         "create": {
             "settings": {

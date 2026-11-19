@@ -2,6 +2,21 @@
 // See: https://next-intl.dev/docs/workflows/typescript#messages-arguments
 
 declare const messages: {
+    "clientDesk": {
+        "loading": "Opening your website…",
+        "failure": "The request could not be completed.",
+        "hint": "Click text in the preview or describe a change for the whole page.",
+        "moved": "Select the text again or use the whole page.",
+        "clear": "Use whole page",
+        "whole": "Whole page",
+        "conversation": "Conversation",
+        "you": "You",
+        "working": "Preparing your change…",
+        "send": "Send",
+        "preview": "Private preview",
+        "compose": "Describe your change",
+        "unavailable": "Connecting the text picker…"
+    },
     "projects": {
         "create": {
             "settings": {

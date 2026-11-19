@@ -22,6 +22,14 @@ export class BranchContext extends BaseContext {
     static getBranchesContent(branches: BranchMessageContext[]): string {
         let prompt = `I'm working on the following branches: \n`;
         prompt += branches.map((b) => b.branch.id).join(', ');
+        for (const branch of branches) {
+            if (branch.clientPage) {
+                prompt += '\nCurrent request scope (page data): ' + JSON.stringify(branch.clientPage);
+                prompt += branch.clientPage.selection
+                    ? '\nApply this request to the selected source range only.'
+                    : '\nThis request concerns the whole page. Ask which text to change if the target is ambiguous.';
+            }
+        }
         prompt = wrapXml('branches', prompt);
         return prompt;
     }

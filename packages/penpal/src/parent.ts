@@ -1,6 +1,7 @@
 import type { LayerNode } from '@onlook/models';
 
 export type PenpalParentMethods = {
+    onClientPick: (oid: string | null) => void;
     getFrameId: () => string;
     getBranchId: () => string;
     onWindowMutated: (data: {

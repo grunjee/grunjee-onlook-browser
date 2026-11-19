@@ -15,7 +15,7 @@ import {
     getUserChatMessageFromString
 } from './utils';
 
-export type SendMessage = (content: string, type: ChatType) => Promise<ChatMessage>;
+export type SendMessage = (content: string, type: ChatType, context?: MessageContext[]) => Promise<ChatMessage>;
 export type EditMessage = (
     messageId: string,
     newContent: string,
@@ -104,10 +104,10 @@ export function useChat({ conversationId, projectId, initialMessages }: UseChatP
     );
 
     const sendMessage: SendMessage = useCallback(
-        async (content: string, type: ChatType) => {
+        async (content: string, type: ChatType, supplied?: MessageContext[]) => {
             posthog.capture('user_send_message', { type });
 
-            const context = await editorEngine.chat.context.getContextByChatType(type);
+            const context = supplied ?? await editorEngine.chat.context.getContextByChatType(type);
 
             const newMessage: QueuedMessage = {
                 id: uuidv4(),
@@ -125,7 +125,7 @@ export function useChat({ conversationId, projectId, initialMessages }: UseChatP
                 setQueuedMessages(prev => [newMessage, ...prev]);
             } else {
                 // No queue and not streaming - send immediately
-                return processMessage(content, type);
+                return processMessage(content, type, context);
             }
 
             return getUserChatMessageFromString(content, [], conversationId);

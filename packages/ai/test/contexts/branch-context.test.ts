@@ -30,6 +30,17 @@ describe('BranchContext', () => {
         ...overrides,
     });
 
+    test('client requests carry either the selected source range or whole-page scope', () => {
+        const page = { projectId: 'juniper', path: '/', checkpoint: '1234567' };
+        const selection = { oid: 'pickup-time', text: 'Saturday pickup: 8 AM', sourcePath: 'app/page.tsx', start: 20, end: 20 };
+        const scoped = BranchContext.getBranchesContent([createMockBranchContext({clientPage: {...page, selection}})]);
+        expect(scoped).toContain(JSON.stringify(selection));
+        expect(scoped).toContain('selected source range only');
+        const whole = BranchContext.getBranchesContent([createMockBranchContext({clientPage:page})]);
+        expect(whole).not.toContain('pickup-time');
+        expect(whole).toContain('Ask which text to change');
+    });
+
     describe('static properties', () => {
         test('should have correct context type', () => {
             expect(BranchContext.contextType).toBe(MessageContextType.BRANCH);

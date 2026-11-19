@@ -1,4 +1,19 @@
 {
+    "clientDesk": {
+        "loading": "Abriendo tu sitio…",
+        "failure": "No se pudo completar la solicitud.",
+        "hint": "Selecciona texto en la vista previa o describe un cambio para toda la página.",
+        "moved": "Vuelve a seleccionar el texto o usa toda la página.",
+        "clear": "Usar toda la página",
+        "whole": "Toda la página",
+        "conversation": "Conversación",
+        "you": "Tú",
+        "working": "Preparando el cambio…",
+        "send": "Enviar",
+        "preview": "Vista previa privada",
+        "compose": "Describe el cambio",
+        "unavailable": "Conectando el selector de texto…"
+    },
     "projects": {
         "create": {
             "settings": {

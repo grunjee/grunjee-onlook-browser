@@ -21,7 +21,9 @@ import { LeftPanel } from './left-panel';
 import { RightPanel } from './right-panel';
 import { TopBar } from './top-bar';
 
-export const Main = observer(() => {
+import { ClientWorkspace } from './client-workspace';
+
+export const Main = observer(({ projectName, builder }: { projectName: string, builder: boolean }) => {
     const router = useRouter();
     const editorEngine = useEditorEngine();
     const { isProjectReady, error } = useStartProject();
@@ -78,6 +80,8 @@ export const Main = observer(() => {
             </div>
         );
     }
+
+    if (!builder) return <ClientWorkspace name={projectName} />;
 
     return (
         <TooltipProvider>

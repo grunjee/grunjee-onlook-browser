@@ -1,4 +1,19 @@
 {
+    "clientDesk": {
+        "loading": "웹사이트를 여는 중…",
+        "failure": "요청을 완료할 수 없습니다.",
+        "hint": "미리보기에서 글을 선택하거나 페이지 전체의 변경 내용을 입력하세요.",
+        "moved": "글을 다시 선택하거나 페이지 전체를 선택하세요.",
+        "clear": "페이지 전체 사용",
+        "whole": "페이지 전체",
+        "conversation": "대화",
+        "you": "나",
+        "working": "변경 준비 중…",
+        "send": "보내기",
+        "preview": "비공개 미리보기",
+        "compose": "변경 내용을 입력하세요",
+        "unavailable": "텍스트 선택 도구 연결 중…"
+    },
     "projects": {
         "create": {
             "settings": {

@@ -18,6 +18,12 @@ type BaseMessageContext = {
 export type BranchMessageContext = BaseMessageContext & {
     type: MessageContextType.BRANCH;
     branch: Branch;
+    clientPage?: {
+        projectId: string;
+        path: string;
+        checkpoint?: string;
+        selection?: { oid: string; text: string; sourcePath: string; start: number; end: number };
+    };
 };
 
 export type FileMessageContext = BaseMessageContext & {

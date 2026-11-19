@@ -1,4 +1,19 @@
 {
+    "clientDesk": {
+        "loading": "サイトを開いています…",
+        "failure": "リクエストを完了できませんでした。",
+        "hint": "プレビューの文字を選ぶか、ページ全体の変更を入力してください。",
+        "moved": "文字を選び直すか、ページ全体を選んでください。",
+        "clear": "ページ全体を使う",
+        "whole": "ページ全体",
+        "conversation": "会話",
+        "you": "あなた",
+        "working": "変更を準備中…",
+        "send": "送信",
+        "preview": "非公開プレビュー",
+        "compose": "変更内容を入力",
+        "unavailable": "文字選択を接続中…"
+    },
     "pricing": {
         "plans": {
             "basic": {

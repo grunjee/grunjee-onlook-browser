@@ -68,3 +68,47 @@ test('Juniper pickup edit survives a fresh read and changes exactly one source l
   assert.equal(await (await call('/site/juniper-lane')).text(), baseline);
   assert.equal(await (await call('/api/source/juniper-lane/1')).text(), original);
 });
+
+test('Clearing pickup selection drops its scope and preserves the original message context', async () => {
+  const {action} = setup();
+  const site = 'juniper-lane';
+  const bakery = state => state.sites.find(s => s.id === site);
+  let result = bakery(await action('edit', {site, scope:'element', target:'pickup-time', text:'Make that seven.'}));
+  const snapshot = result.messages[0].context;
+  assert.equal(snapshot.site, site);
+  assert.equal(snapshot.page, '/');
+  assert.equal(snapshot.oid, 'pickup-time');
+  assert.equal(snapshot.text, 'Saturday pickup: 8 AM');
+  assert.equal(snapshot.revision, 1);
+  assert.ok(snapshot.section);
+  result = bakery(await action('edit', {site, scope:'page', text:'Make that nine.'}));
+  assert.equal(result.head, 2);
+  assert.equal(result.lastTarget, null);
+  assert.equal(result.messages.at(-2).context.scope, 'page');
+  assert.deepEqual(result.messages[0].context, snapshot);
+  assert.equal(result.question.kind, 'target');
+  await action('edit', {site, scope:'element', target:'moved', text:'Make that nine.'},409);
+});
+
+test('One whole-page replacement updates both hours in one private revision', async () => {
+  const {action,call} = setup();
+  const site = 'juniper-lane';
+  const state = await action('edit', {site, scope:'page', text:'Replace "8 AM" with "9 AM" across the whole page'});
+  const bakery = state.sites.find(s => s.id === site);
+  assert.equal(bakery.head, 2);
+  assert.equal(bakery.live, 1);
+  const changed = bakery.versions[1].items.filter(item => /9 AM/.test(item.text));
+  assert.deepEqual(new Set(changed.map(item => item.id)), new Set(['opening-time','pickup-time']));
+  assert.match(await (await call('/site/'+site)).text(), /Saturday pickup: 8 AM/);
+});
+
+test('A conversation reference opens its original wording and identifies a moved target', async () => {
+  const {action,call} = setup();
+  const site = 'juniper-lane';
+  await action('edit', {site,scope:'element',target:'pickup-time',text:'Make that seven.'});
+  const old = await (await call('/saved/juniper-lane/1?element=pickup-time')).text();
+  assert.match(old, /id="selected-text" data-oid="pickup-time">Saturday pickup: 8 AM/);
+  const moved = await (await call('/saved/juniper-lane/1?element=missing')).text();
+  assert.match(moved, /The selected text moved/);
+  assert.doesNotMatch(moved, /id="selected-text"/);
+});

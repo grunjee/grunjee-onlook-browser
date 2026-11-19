@@ -2,7 +2,7 @@ import { api } from '@/trpc/server';
 import { Main } from './_components/main';
 import { ProjectProviders } from './providers';
 
-export default async function Page({ params }: { params: Promise<{ id: string }> }) {
+export default async function Page({ params, searchParams }: { params: Promise<{ id: string }>, searchParams: Promise<{ view?: string }> }) {
     const projectId = (await params).id;
     if (!projectId) {
         return <div>Invalid project ID</div>;
@@ -21,7 +21,7 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
 
         return (
             <ProjectProviders project={project} branches={branches}>
-                <Main />
+                <Main projectName={project.name} builder={(await searchParams).view === 'builder'} />
             </ProjectProviders>
         );
     } catch (error) {
