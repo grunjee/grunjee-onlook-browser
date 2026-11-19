@@ -334,6 +334,15 @@ export class GitManager {
     /**
      * Run a git command through the sandbox session
      */
+    async readCommittedFile(oid: string, file: string, parent = false): Promise<string | null> {
+        if (!/^[a-f0-9]{40,64}$/i.test(oid) || !file || /[\0\r\n]/.test(file)) return null;
+        const path = file.replace(/^\.?\//, '');
+        const object = oid + (parent ? '^:' : ':') + path;
+        const quoted = "'" + object.replace(/'/g, "'\\''") + "'";
+        const result = await this.runCommand('git show ' + quoted,true);
+        return result.success ? result.output : null;
+    }
+
     private runCommand(command: string, ignoreError = false): Promise<GitCommandResult> {
         return this.sandbox.session.runCommand(command, undefined, ignoreError);
     }

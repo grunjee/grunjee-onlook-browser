@@ -3,7 +3,8 @@
 import { useEditorEngine } from '@/components/store/editor';
 import type { FrameData } from '@/components/store/editor/frames';
 import { api } from '@/trpc/react';
-import { ChatType, MessageContextType, type ChatMessage, type HighlightMessageContext } from '@onlook/models';
+import { getUserChatMessageFromString } from '../_hooks/use-chat/utils';
+import { MessageContextType, type ChatMessage, type HighlightMessageContext } from '@onlook/models';
 import { observer } from 'mobx-react-lite';
 import { useTranslations } from 'next-intl';
 import { useEffect, useRef, useState } from 'react';
@@ -14,27 +15,38 @@ import { FrameComponent, type IFrameView } from './canvas/frame/view';
 export const ClientWorkspace = observer(({ name }: { name: string }) => {
     const engine = useEditorEngine();
     const t = useTranslations('clientDesk');
+    const account = api.user.get.useQuery();
     const conversation = engine.chat.conversation.current;
     const frame = engine.frames.getByBranchId(engine.branches.activeBranch.id)[0];
     const history = api.chat.message.getAll.useQuery({ conversationId: conversation?.id ?? '' }, { enabled: !!conversation });
-    if (!conversation || !frame || !history.data) {
-        return <main className="p-8" role="status">{history.isError ? t('failure') : t('loading')}</main>;
+    if (!account.data || !conversation || !frame || !history.data) {
+        return <main className="p-8" role="status">{history.isError || account.isError ? t('failure') : t('loading')}</main>;
     }
-    return <Workspace key={conversation.id + frame.frame.id} name={name} frame={frame}
+    return <Workspace key={account.data.id + conversation.id + frame.frame.id} accountId={account.data.id} name={name} frame={frame}
         conversationId={conversation.id} initialMessages={history.data} />;
 });
 
 type WorkspaceProps = {
     name: string;
+    accountId: string;
     frame: FrameData;
     conversationId: string;
     initialMessages: ChatMessage[];
 };
 
-const Workspace = observer(({ name, frame, conversationId, initialMessages }: WorkspaceProps) => {
+type Pending = { id:string; text:string; previous?:string; oid?:string; wording?:string; page:string; checkpoint?:string };
+function saved<T>(key:string): T | null {
+    try { return JSON.parse(localStorage.getItem(key) ?? 'null'); } catch { return null; }
+}
+function save(key:string, value:unknown) {
+    if (value == null) localStorage.removeItem(key);
+    else localStorage.setItem(key,JSON.stringify(value));
+}
+const scopeOf = (m?:ChatMessage) => m?.metadata?.context.find(c=>c.type===MessageContextType.BRANCH && c.clientPage);
+const Workspace = observer(({ name, accountId, frame, conversationId, initialMessages }: WorkspaceProps) => {
     const t = useTranslations('clientDesk');
     const engine = useEditorEngine();
-    const { messages, sendMessage, isStreaming, error } = useChat({ conversationId, projectId: engine.projectId, initialMessages });
+    const { messages, setMessages, sendClientTurn, isStreaming, error } = useChat({ clientMode:true, conversationId, projectId: engine.projectId, initialMessages });
     const reload = useFrameReload();
     const view = useRef<IFrameView>(null);
     const composer = useRef<HTMLTextAreaElement>(null);
@@ -48,7 +60,30 @@ const Workspace = observer(({ name, frame, conversationId, initialMessages }: Wo
     const [moved, setMoved] = useState(false);
     const [working, setWorking] = useState(false);
     const [failed, setFailed] = useState(false);
-    const storageKey = 'grunjee:desk:' + conversationId + ':' + frame.frame.id;
+    const storageKey = ['grunjee:desk',accountId,conversationId,frame.frame.id].join(':');
+    const [pending,setPending] = useState<Pending | null>(null);
+    const [held,setHeld] = useState(false);
+    const [hydrated,setHydrated] = useState(false);
+    const utils = api.useUtils();
+    function release() {
+        save(storageKey+':pending',null);
+        setPending(null); setHeld(false); setFailed(false);
+    }
+    function accept() {
+        release(); save(storageKey+':draft',null); setDraft('');
+    }
+    useEffect(() => {
+        const attempt = saved<Pending>(storageKey+':pending');
+        const row = scopeOf(initialMessages.find(m=>m.id===attempt?.id));
+        if (attempt && row?.type===MessageContextType.BRANCH && row.clientDelivery?.state==='complete') accept();
+        else {
+            setPending(attempt); setDraft(attempt?.text ?? saved<string>(storageKey+':draft') ?? '');
+            setFailed(!!attempt);
+            setHeld(!!row && row.type===MessageContextType.BRANCH && row.clientDelivery?.state!=='retryable');
+        }
+        setHydrated(true);
+    },[storageKey]);
+
 
     async function pick(oid: string | null, focus: boolean, previous?: string, previousPage?: string) {
         const token = ++sequence.current;
@@ -64,8 +99,7 @@ const Workspace = observer(({ name, frame, conversationId, initialMessages }: Wo
             setReady(Boolean(check));
             if (valid && check) {
                 pickedPage.current = check.page;
-                if (highlight && oid) sessionStorage.setItem(storageKey, JSON.stringify({oid, text:highlight.displayName, page:check.page}));
-                else sessionStorage.removeItem(storageKey);
+                save(storageKey, {oid, text:highlight?.displayName, page:check.page});
                 if (focus) composer.current?.focus();
             }
         } catch {
@@ -75,29 +109,78 @@ const Workspace = observer(({ name, frame, conversationId, initialMessages }: Wo
 
     useEffect(() => {
         if (!reload.isPenpalConnected) { setReady(false); return; }
-        let saved: { oid?: string, text?: string, page?: string } | null = null;
-        try { saved = JSON.parse(sessionStorage.getItem(storageKey) ?? 'null'); } catch { /* Start with the page. */ }
-        void pick(saved?.oid ?? null, false, saved?.text, saved?.page);
+        const previous = saved<{oid?:string;text?:string;page?:string}>(storageKey);
+        const last = initialMessages.findLast(m=>m.role==='user');
+        const branch = scopeOf(last);
+        const page = branch?.type===MessageContextType.BRANCH ? branch.clientPage : undefined;
+        const committed = last?.metadata?.checkpoints.some(c=>c.branchId===frame.frame.branchId &&
+            c.oid===engine.branches.getBranchDataById(frame.frame.branchId)?.sandbox.gitManager.commits?.[0]?.oid);
+        const oid = previous ? previous.oid : page?.selection?.oid;
+        const wording = committed && oid===page?.selection?.oid ? undefined : previous?.text ?? page?.selection?.text;
+        void pick(oid ?? null,false,wording,previous?.page ?? page?.path);
         return () => { sequence.current++; };
     }, [reload.isPenpalConnected, storageKey]);
 
+    useEffect(() => {
+        if (!held || !pending || working || isStreaming) return;
+        let cancelled = false;
+        const check = async () => {
+            try {
+                const history = await utils.chat.message.getAll.fetch({conversationId},{staleTime:0});
+                if (cancelled) return;
+                const row = scopeOf(history.find(m=>m.id===pending.id));
+                if (row?.type!==MessageContextType.BRANCH) return;
+                if (row.clientDelivery?.state==='complete') {
+                    setMessages(history); accept();
+                    if (pending.oid) await pick(pending.oid,false,undefined,pending.page);
+                } else if (row.clientDelivery?.state==='retryable') setHeld(false);
+            } catch { /* The status button remains available offline. */ }
+        };
+        const timer=window.setTimeout(check,1200);
+        window.addEventListener('focus',check);
+        return () => {cancelled=true;window.clearTimeout(timer);window.removeEventListener('focus',check)};
+    },[held,pending,working,isStreaming,conversationId]);
+
     useEffect(() => { thread.current?.scrollTo(0, thread.current.scrollHeight); }, [messages]);
     async function submit() {
-        if (sending.current || isStreaming || !ready || moved || !draft.trim()) return;
-        sending.current = true;
-        setWorking(true);
-        setFailed(false);
+        if (!hydrated || sending.current || isStreaming || !draft.trim() || (!pending && (!ready || moved))) return;
+        sending.current = true; setWorking(true); setFailed(false);
         try {
-            const oid = selection?.oid;
-            const fresh = oid ? await engine.chat.context.clientText(oid, frame.frame.branchId) : null;
-            const check = await view.current?.clientPicker(oid ?? null, fresh?.displayName ?? null);
-            if (!check?.matches || check.page !== pickedPage.current || (selection && fresh?.displayName !== selection.displayName)) {
-                setMoved(true);
-                return;
+            const history = await utils.chat.message.getAll.fetch({conversationId},{staleTime:0});
+            const attempt = pending ?? saved<Pending>(storageKey+':pending');
+            const stored = history.find(m=>m.id===attempt?.id);
+            const recorded = scopeOf(stored);
+            const delivery = recorded?.type===MessageContextType.BRANCH ? recorded.clientDelivery : null;
+            if (delivery?.state==='complete') { setMessages(history); accept(); return; }
+            if (delivery && delivery.state!=='retryable') { setMessages(history); setHeld(true); setFailed(true); return; }
+            const last = history.findLast(m=>m.role==='user')?.id;
+            const previous = messages.findLast(m=>m.role==='user')?.id;
+            if (!stored && (attempt ? attempt.previous : previous)!==last) {
+                setMessages(history); release(); setFailed(true); return;
             }
-            const context = await engine.chat.context.clientPageContext(frame, check.page, fresh);
-            await sendMessage(draft.trim(), ChatType.EDIT, context);
-            setDraft('');
+            const oid=attempt ? attempt.oid : selection?.oid;
+            const fresh=oid ? await engine.chat.context.clientText(oid, frame.frame.branchId) : null;
+            const check=await view.current?.clientPicker(oid??null,fresh?.displayName??null);
+            if (!check?.matches || check.page!==(attempt?.page??pickedPage.current) ||
+                fresh?.displayName!==(attempt ? attempt.wording : selection?.displayName) ||
+                (attempt && attempt.checkpoint!==checkpoint)) {
+                release(); setMoved(true); return;
+            }
+            const intent=attempt ?? {id:crypto.randomUUID(),text:draft.trim(),previous,oid,
+                wording:fresh?.displayName,page:check.page,checkpoint};
+            save(storageKey+':pending',intent); setPending(intent); setHeld(false);
+            const turn=stored ?? getUserChatMessageFromString(intent.text,
+                await engine.chat.context.clientPageContext(frame,check.page,fresh),conversationId,intent.id);
+            await sendClientTurn(turn,history);
+            const updated=await utils.chat.message.getAll.fetch({conversationId},{staleTime:0});
+            const result=scopeOf(updated.find(m=>m.id===intent.id));
+            if (result?.type===MessageContextType.BRANCH && result.clientDelivery?.state==='complete') {
+                accept();
+                if (oid) await pick(oid,false,undefined,check.page);
+            } else {
+                setHeld(result?.type===MessageContextType.BRANCH && result.clientDelivery?.state!=='retryable');
+                setFailed(true);
+            }
         } catch { setFailed(true); }
         finally { sending.current = false; setWorking(false); }
     }
@@ -117,26 +200,33 @@ const Workspace = observer(({ name, frame, conversationId, initialMessages }: Wo
                             <strong className="block text-sm">{message.role === 'user' ? t('you') : name}</strong>
                             {branch?.type === MessageContextType.BRANCH && <small>{branch.clientPage?.selection?.text ?? t('whole')}</small>}
                             <p>{text}</p>
+                            {message.metadata?.checkpoints.filter(c=>c.branchId===frame.frame.branchId).map(c=>
+                                <details key={c.oid} className="mt-1 text-sm"><summary>{t('revision')} {c.oid.slice(0,7)}</summary>
+                                    {c.wording ? <><del className="block">{c.wording.before}</del><ins>{c.wording.after}</ins></> : <code>{c.oid}</code>}
+                                </details>)}
+
                         </div>;
                     })}
                 </div>
                 <form className="space-y-2 border-t p-4" onSubmit={event => { event.preventDefault(); void submit(); }}>
                     <div className="flex items-center justify-between gap-2 text-sm">
                         <span>{moved ? t('moved') : selection?.displayName ?? t('whole')}</span>
-                        {(selection || moved) && <button type="button" disabled={working} className="underline" onClick={() => void pick(null, true)}>{t('clear')}</button>}
+                        {(selection || moved) && <button type="button" disabled={working || !!pending} className="underline" onClick={() => void pick(null, true)}>{t('clear')}</button>}
                     </div>
                     <textarea ref={composer} aria-label={t('compose')} placeholder={t('compose')} rows={3} className="w-full rounded border bg-background p-3"
-                        value={draft} onChange={event => setDraft(event.target.value)} maxLength={2500}
+                        readOnly={!!pending || working || !hydrated} value={draft} onChange={event => {
+                            setDraft(event.target.value); save(storageKey+':draft',event.target.value);
+                        }} maxLength={2500}
                         onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void submit(); } }} />
-                    {(error || failed) && <p role="alert">{t('failure')}</p>}
+                    {(failed || (pending && error)) && <p role="alert">{held ? t('unconfirmed') : t('failure')}</p>}
                     {isStreaming || working ? <p role="status">{t('working')}</p> :
-                        <button className="rounded bg-primary px-4 py-2 text-primary-foreground disabled:opacity-50" disabled={!ready || moved || !draft.trim()}>{t('send')}</button>}
+                        <button className="rounded bg-primary px-4 py-2 text-primary-foreground disabled:opacity-50" disabled={!hydrated || (!pending && (!ready || moved)) || !draft.trim()}>{pending ? t(held?'check':'retry') : t('send')}</button>}
                 </form>
             </section>
             <section className="flex min-h-0 flex-col">
                 <h2 className="border-b px-5 py-3 font-medium">{t('preview')} {checkpoint && <small className="font-mono">{checkpoint.slice(0, 7)}</small>}</h2>
                 <div className="relative min-h-0 flex-1">
-                    <div className="h-full" inert={!ready || working || isStreaming}>
+                    <div className="h-full" inert={!ready || working || isStreaming || !!pending}>
                         <FrameComponent key={reload.reloadKey} ref={view} frame={frame.frame} title={t('preview')}
                             style={{width:'100%',height:'100%'}} sandbox="allow-scripts allow-same-origin" allow=""
                             reloadIframe={reload.immediateReload} penpalTimeoutMs={reload.getPenpalTimeout()}

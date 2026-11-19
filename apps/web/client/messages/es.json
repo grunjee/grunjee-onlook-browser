@@ -1,5 +1,9 @@
 {
     "clientDesk": {
+        "revision": "Versión guardada",
+        "retry": "Reintentar",
+        "check": "Ver estado",
+        "unconfirmed": "La solicitud anterior podría haberse ejecutado. Comprueba su estado antes de hacer otro cambio.",
         "loading": "Abriendo tu sitio…",
         "failure": "No se pudo completar la solicitud.",
         "hint": "Selecciona texto en la vista previa o describe un cambio para toda la página.",

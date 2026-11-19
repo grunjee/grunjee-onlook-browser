@@ -18,6 +18,13 @@ type BaseMessageContext = {
 export type BranchMessageContext = BaseMessageContext & {
     type: MessageContextType.BRANCH;
     branch: Branch;
+    clientDelivery?: {
+        state: 'running' | 'tools' | 'complete' | 'retryable' | 'unconfirmed';
+        attempt: string;
+        responseId?: string;
+        toolCallIds?: string[];
+        usedTools: boolean;
+    };
     clientPage?: {
         projectId: string;
         path: string;

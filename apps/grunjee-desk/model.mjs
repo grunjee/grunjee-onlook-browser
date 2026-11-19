@@ -35,21 +35,39 @@ function pickTarget(s,body,items){
 }
 export function replacement(note,old,exact=false) {
   const t=note.trim();
+  const oldTimes=[...old.matchAll(/\b\d{1,2}(?::\d{2})?\s*(am|pm)\b/gi)];
+  const digits={one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10,eleven:11,twelve:12};
+  const words=t.toLowerCase().replace(/\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b/g,w=>digits[w]);
+  const quoted=/["“]/.test(t);
+  if(oldTimes.length && !quoted && /\d/.test(words)){
+    if(/\b(or|maybe|either)\b|\?/.test(words))return null;
+    const time=words.match(/^(?:(?:actually|instead)[, ]+)?(?:(?:please )?(?:make|change|set|move|update|use)\b[^\d]*?)?(1[0-2]|[1-9])(?::([0-5]\d))?\s*(am|pm)?[.!]?$/);
+    if(time && oldTimes.length===1){
+      const [,hour,minute,period]=time;
+      const label=hour+(minute?':'+minute:'')+' '+(period||oldTimes[0][1]).toUpperCase();
+      return old.replace(oldTimes[0][0],label);
+    }
+    if(!exact||/^[\d:\s]+(?:am|pm)?[.!]?$/i.test(t))return null;
+  }
   if(exact)return t;
   const q=[...t.matchAll(/["“]([^"”]+)["”]/g)];if(q.length)return q.at(-1)[1].trim();
   const verbal=t.match(/^(?:(?:please\s+)?(?:replace|change|set|update|rename|rewrite|make)\b.+?\b(?:with|to|as|say|read)\s+|(?:use|say|write|set to|text:|replace with)\s+)([\s\S]+)$/i);
   if(verbal)return verbal[1].trim().replace(/^[:\s]+/,'');
-  if(/\b(?:time|am|pm)\b/i.test(old)){
-    const digits={one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10,eleven:11,twelve:12};
-    const words=t.toLowerCase().replace(/\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b/g,w=>digits[w]);
-    const match=words.match(/\b(1[0-2]|[1-9])(?::([0-5]\d))?\s*(am|pm)?\b/i);
-    if(match && /\b\d{1,2}(?::\d{2})?\s*(am|pm)\b/i.test(old))return old.replace(/\b\d{1,2}(?::\d{2})?\s*(am|pm)\b/i,(_,period)=>match[1]+(match[2]?':'+match[2]:'')+' '+(match[3]||period).toUpperCase())
-  }
   return null
+}
+export function editRecorded(state, action) {
+  if (action.type !== 'edit') return false;
+  const site = state.sites.find(item => item.id === action.site);
+  return Boolean(site?.messages.some(message => message.who === 'you' && message.requestId === action.key));
 }
 export function transact(original,a,now=new Date().toISOString(),readSource){
   if(!a||!checkString(a.key,100))fail('This action needs a request ID.');
-  if(original.receipts.includes(a.key))return original;
+  if(editRecorded(original, a) || original.receipts.includes(a.key))return original;
+  if(a.type === 'edit' && a.fromRevision !== undefined){
+    const site = original.sites.find(entry => entry.id === a.site);
+    if(!site || a.fromRevision !== site.head || a.afterMessages !== site.messages.length)
+      fail('This conversation changed. Check the latest preview before sending your draft.',409);
+  }
   if(a.serial!==original.serial)fail('This workspace changed in another tab. Its latest version has been loaded.',409);
   const state=copy(original);
   if(a.type==='create'){
@@ -65,7 +83,11 @@ export function transact(original,a,now=new Date().toISOString(),readSource){
   }else{
     const s=state.sites.find(site=>site.id===a.site);if(!s)fail('Website not found.',404);
     const head=revision(s,s.head),live=revision(s,s.live);
-    const say=(who,text,target=null,context)=>s.messages.push({who,text,at:now,target,...(context && {context})});
+    let changeId;
+    const say=(who,text,target=null,context,result)=>s.messages.push({
+      who,text,at:now,target,...(context && {context}),...(result && {result}),
+      ...(changeId && {requestId:a.key,changeId}),
+    });
     if(a.type==='edit'){
       if(!checkString(a.text,2500))fail('Write a change in 2,500 characters or less.');
       if(s.messages.length>=600)fail('This pilot conversation is full. Export your page or start a new website.');
@@ -73,6 +95,12 @@ export function transact(original,a,now=new Date().toISOString(),readSource){
       const pageScope = a.scope === 'page' || (!a.scope && !target);
       const index = target ? head.items.indexOf(target) : -1;
       const section = head.items.slice(0, index + 1).reverse().find(item => /^h[1-3]$/.test(item.tag));
+      const previous = s.messages.findLast(message => message.who === 'you');
+      const correcting = /^(?:actually\b|instead\b|on second thought\b|make (?:that|it)\b)/i.test(a.text.trim());
+      const answeringTarget = s.question?.kind === 'target' && target && !pageScope;
+      const answeringWords = s.question?.kind === 'words' && s.question.target === target?.id && !pageScope;
+      const related = answeringWords || answeringTarget || (correcting && previous && !pageScope && target.id === previous.target);
+      changeId = (related && (s.question?.changeId || previous?.changeId)) || a.key;
       say('you', a.text, pageScope ? null : target.id, {
         site: s.id, page: '/', revision: head.n, scope: pageScope ? 'page' : 'element',
         ...(pageScope ? {} : { oid: target.id, label: target.label, text: target.text, section: section?.text }),
@@ -84,8 +112,9 @@ export function transact(original,a,now=new Date().toISOString(),readSource){
         items = head.items.map(item => ({...item, text: item.text.split(before).join(after)}));
         if (items.some(item => item.text.length > 2500)) fail('Shorten the replacement wording.');
       } else if (target) {
-        const answering = s.question?.kind === 'words' && s.question.target === target.id && !pageScope;
-        const next = replacement(a.text, target.text, Boolean(a.exact) || answering);
+        const pointsBack = answeringTarget && /^(?:this(?: one)?|that(?: one)?|here|yes)[.!]?$/i.test(a.text.trim());
+        const note = pointsBack ? s.question.note : a.text;
+        const next = replacement(note, target.text, Boolean(a.exact) || answeringWords);
         if (next) items = head.items.map(item => item.id === target.id ? {...item, text: next} : item);
       }
       if (pageScope) s.lastTarget = null;
@@ -95,20 +124,25 @@ export function transact(original,a,now=new Date().toISOString(),readSource){
         if (changed.length) {
           const n = s.versions.length + 1;
           const oid = !pageScope && target ? target.id : null;
-          s.versions.push({n, at: now, base: s.live, items, target: oid, summary: changed.length === 1 ? changed[0].label + ' updated' : changed.length + ' text blocks updated'});
+          s.versions.push({n, at: now, from:head.n, requestId:a.key, changeId, base: s.live, items, target: oid, summary: changed.length === 1 ? changed[0].label + ' updated' : changed.length + ' text blocks updated'});
           s.head = n;
           s.reviewed = null;
           s.lastTarget = oid;
-          say('desk', 'Version ' + n + ' is ready to review.', oid);
+          say('desk', 'Version ' + n + ' is ready to review.', oid, null, {from:head.n, revision:n});
         } else say('desk', pageReplace ? 'The preview already matches, or the original wording was not found.' : 'That wording already appears in the preview.');
       } else if (target && !pageScope) {
         s.lastTarget = target.id;
-        s.question = {kind:'words', target:target.id};
+        s.question = {kind:'words', target:target.id, changeId};
         say('desk', 'What exact wording should replace “' + target.text + '”?', target.id);
       } else {
-        s.question = {kind:'target', note:a.text, target:null};
-        say('desk', 'Which text should change? Select it in the preview, or write Replace “old text” with “new text” for the whole page.');
+        s.question = {kind:'target', note:a.text, target:null, changeId};
+        say('desk', 'Which text should change? Click it in the preview and reply “this one”.');
       }
+    }else if(a.type==='attention'){
+      if(!checkString(a.editKey,100)||!checkString(a.note,2500)||!revision(s,a.version))fail('Choose the request that needs attention.');
+      if(s.events.some(event=>event.kind==='attention' && event.editKey===a.editKey))return original;
+      s.events.push({kind:'attention',editKey:a.editKey,site:s.id,version:a.version,note:a.note,at:now,
+        target:head.items.some(item=>item.id===a.target)?a.target:null});
     }else if(a.type==='review'){
       if(a.version!==s.head||s.head===s.live||head.base!==s.live)fail('Open the latest private preview before reviewing.',409);
       s.reviewed=s.head

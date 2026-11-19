@@ -5,3 +5,9 @@
 .message-ref{display:block;border:0;background:transparent;color:inherit;text-align:left;font:inherit;font-size:.75rem;text-decoration:underline;overflow-wrap:anywhere;padding:.25rem 0}
 button.send{width:auto;padding:0 12px;gap:4px}.send span{display:inline-flex}
 @media(min-width:850px){.work{min-height:380px}}
+
+#editFailure:empty{display:none}#editFailure{font-size:.875rem;color:#753717;padding:0 .5rem;margin:.5rem 0}
+.turn-result{margin:.45rem 0 0 1.85rem;font-size:.875rem;overflow-wrap:anywhere}.turn-result del,.turn-result ins{display:block}.turn-result del{color:#754a45}.turn-result ins{color:#125440;text-decoration:none;font-weight:600}.turn-result a{padding-top:.35rem}
+.visually-hidden{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}.compose-foot [hidden]{display:none!important}
+
+#askEthan[hidden]{display:none}

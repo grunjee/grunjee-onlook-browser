@@ -3,6 +3,10 @@
 
 declare const messages: {
     "clientDesk": {
+        "revision": "Saved version",
+        "retry": "Try again",
+        "check": "Check status",
+        "unconfirmed": "The previous request may have run. Check its status before making another change.",
         "loading": "Opening your website…",
         "failure": "The request could not be completed.",
         "hint": "Click text in the preview or describe a change for the whole page.",

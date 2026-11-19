@@ -1,8 +1,8 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import worker from '../../dist/server/index.js';
-function setup(){
-  const map=new Map(),host='https://test.invalid';const BUCKET={async get(k){const o=map.get(k);return o&&{etag:o.tag,json:()=>JSON.parse(o.data)}},async put(k,data,options){const old=map.get(k);if(options.onlyIf instanceof Headers?!!old:old?.tag!==options.onlyIf.etagMatches)return null;const tag=crypto.randomUUID();map.set(k,{tag,data});return{etag:tag}}};
+function setup(fault={}){
+  const map=new Map(),host='https://test.invalid';const BUCKET={async get(k){const o=map.get(k);return o&&{etag:o.tag,json:()=>JSON.parse(o.data)}},async put(k,data,options){if(fault.before){fault.before=false;throw Error('Interrupted before storage write')}const old=map.get(k);if(options.onlyIf instanceof Headers?!!old:old?.tag!==options.onlyIf.etagMatches)return null;const tag=crypto.randomUUID();map.set(k,{tag,data});if(fault.after){fault.after=false;throw Error('Lost acknowledgement')}return{etag:tag}}};
   const call=(path,action,user='u1')=>worker.fetch(new Request(host+path,{headers:{'oai-authenticated-user-id':user,origin:host,'content-type':'application/json'},method:action?'POST':'GET',body:action?JSON.stringify(action):undefined}),{BUCKET});
   let serial=0;const keys=[];const action=async(type,props={},status=200)=>{const a={key:crypto.randomUUID(),site:'grunjee-labs',serial,type,...props};keys.push(a);const r=await call('/api/action',a);const result=await r.json();assert.equal(r.status,status,JSON.stringify(result.error));if(r.ok)serial=result.serial;return result};
   return {call,action,keys}
@@ -111,4 +111,87 @@ test('A conversation reference opens its original wording and identifies a moved
   const moved = await (await call('/saved/juniper-lane/1?element=missing')).text();
   assert.match(moved, /The selected text moved/);
   assert.doesNotMatch(moved, /id="selected-text"/);
+});
+
+const bakeryId = 'juniper-lane';
+const selected = (text, target = 'pickup-time') => ({site:bakeryId,scope:'element',target,text});
+const currentBakery = async call => (await (await call('/api/workspace')).json()).sites.find(site=>site.id===bakeryId);
+
+for (const point of ['before','after']) {
+  test('A reopened follow-up survives interruption '+point+' the storage write', async () => {
+    const fault={};
+    const {call,action}=setup(fault);
+    await action('edit',selected('Make that seven.'));
+    const attempt={...selected('Actually, make it 7:30.'),type:'edit',key:crypto.randomUUID(),serial:1,fromRevision:2,afterMessages:2};
+    fault[point]=true;
+    assert.equal((await call('/api/action',attempt)).status,500);
+    let site=await currentBakery(call);
+    assert.equal(site.head,point==='before'?2:3);
+    const retries=await Promise.all([call('/api/action',attempt),call('/api/action',attempt)]);
+    assert.deepEqual(retries.map(r=>r.status),[200,200]);
+    site=await currentBakery(call);
+    assert.deepEqual(site.versions.map(v=>v.items.find(i=>i.id==='pickup-time').text),
+      ['Saturday pickup: 8 AM','Saturday pickup: 7 AM','Saturday pickup: 7:30 AM']);
+    assert.equal(site.versions[2].items.find(i=>i.id==='opening-time').text,'Store opens: 8 AM');
+    assert.equal(site.messages.length,4);
+    assert.equal(site.messages[0].changeId,site.messages[2].changeId);
+    assert.equal(site.versions[2].changeId,site.messages[0].changeId);
+    assert.equal(site.messages[2].context.revision,2);
+    assert.deepEqual(site.messages[3].result,{from:2,revision:3});
+    assert.equal(site.live,1);
+  });
+}
+test('An unanswered question keeps its original target and an unrelated edit has its own history',async()=>{
+  const {call,action}=setup();
+  await action('edit',selected('Make that seven.'));
+  await action('edit',selected('Actually, make it seven or eight.'));
+  let site=await currentBakery(call);
+  assert.equal(site.head,2);
+  assert.equal(site.question.target,'pickup-time');
+  await action('edit',selected('7:30'));
+  await action('edit',selected('Change it to nine.','opening-time'));
+  site=await currentBakery(call);
+  assert.equal(site.versions[2].items.find(i=>i.id==='pickup-time').text,'Saturday pickup: 7:30 AM');
+  assert.equal(site.messages[2].changeId,site.messages[4].changeId);
+  assert.notEqual(site.messages[6].changeId,site.messages[4].changeId);
+});
+test('An ambiguous whole-page request can be answered by pointing without repeating the instruction',async()=>{
+  const {call,action}=setup();
+  await action('edit',{site:bakeryId,scope:'page',text:'Make that seven.'});
+  await action('edit',selected('This one.'));
+  const site=await currentBakery(call);
+  assert.equal(site.head,2);
+  assert.equal(site.messages[0].changeId,site.messages[2].changeId);
+  assert.equal(site.versions[1].items.find(i=>i.id==='pickup-time').text,'Saturday pickup: 7 AM');
+});
+test('An unconfirmed request cannot rebase itself over a newer conversation',async()=>{
+  const {call,action}=setup();
+  const pending={...selected('Actually, make it 7:30.'),type:'edit',key:crypto.randomUUID(),serial:0,fromRevision:1,afterMessages:0};
+  await action('edit',selected('Make that nine.','opening-time'));
+  assert.equal((await call('/api/action',{...pending,serial:1})).status,409);
+  assert.equal((await currentBakery(call)).head,2);
+});
+test('Flagging an interrupted edit keeps the same preview and the retry remains valid',async()=>{
+  const {call,action}=setup();
+  const key=crypto.randomUUID();
+  await action('attention',{site:bakeryId,editKey:key,note:'Make that seven.',version:1,target:'pickup-time'});
+  await action('attention',{site:bakeryId,editKey:key,note:'Make that seven.',version:1,target:'pickup-time'});
+  const site=await currentBakery(call);
+  assert.equal(site.events.length,1);
+  assert.equal(site.head,1);
+  assert.equal(site.messages.length,0);
+  await action('edit',{...selected('Make that seven.'),key,fromRevision:1,afterMessages:0});
+  assert.equal((await currentBakery(call)).head,2);
+});
+
+test('Edit identities survive eviction from the rolling receipt list',async()=>{
+  const {call,action,keys}=setup();
+  await action('edit',selected('Make that seven.'));
+  const original=keys[0];
+  for(let n=0;n<129;n++)await action('edit',{...selected('use Header '+n,'bakery-title')});
+  const before=await (await call('/api/workspace')).json();
+  assert.ok(!before.receipts.includes(original.key));
+  const replay=await (await call('/api/action',original)).json();
+  assert.equal(replay.serial,before.serial);
+  assert.equal(replay.sites.find(s=>s.id===bakeryId).messages.length,260);
 });

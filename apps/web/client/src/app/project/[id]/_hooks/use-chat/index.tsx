@@ -4,7 +4,7 @@ import { useEditorEngine } from '@/components/store/editor';
 import { handleToolCall } from '@/components/tools';
 import { api } from '@/trpc/client';
 import { useChat as useAiChat } from '@ai-sdk/react';
-import { ChatType, type ChatMessage, type GitMessageCheckpoint, type MessageContext, type QueuedMessage } from '@onlook/models';
+import { ChatType, MessageContextType, type ChatMessage, type GitMessageCheckpoint, type MessageContext, type QueuedMessage } from '@onlook/models';
 import { jsonClone } from '@onlook/utility';
 import { DefaultChatTransport, lastAssistantMessageIsCompleteWithToolCalls, type FinishReason } from 'ai';
 import { usePostHog } from 'posthog-js/react';
@@ -29,11 +29,12 @@ export type ProcessMessage = (
 
 interface UseChatProps {
     conversationId: string;
+    clientMode?: boolean;
     projectId: string;
     initialMessages: ChatMessage[];
 }
 
-export function useChat({ conversationId, projectId, initialMessages }: UseChatProps) {
+export function useChat({ conversationId, projectId, initialMessages, clientMode = false }: UseChatProps) {
     const editorEngine = useEditorEngine();
     const posthog = usePostHog();
 
@@ -42,9 +43,9 @@ export function useChat({ conversationId, projectId, initialMessages }: UseChatP
     const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
     const isProcessingQueue = useRef(false);
 
-    const { addToolResult, messages, error, stop, setMessages, regenerate, status } =
+    const { addToolResult, messages, error, stop, setMessages, sendMessage: streamMessage, regenerate, status } =
         useAiChat<ChatMessage>({
-            id: 'user-chat',
+            id: clientMode ? conversationId : 'user-chat',
             messages: initialMessages,
             sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
             transport: new DefaultChatTransport({
@@ -52,11 +53,12 @@ export function useChat({ conversationId, projectId, initialMessages }: UseChatP
                 body: {
                     conversationId,
                     projectId,
+                    ...(clientMode && {chatType:ChatType.EDIT}),
                 },
             }),
             onToolCall: async (toolCall) => {
                 setIsExecutingToolCall(true);
-                void handleToolCall(toolCall.toolCall, editorEngine, addToolResult).then(() => {
+                void handleToolCall(toolCall.toolCall, editorEngine, addToolResult).finally(() => {
                     setIsExecutingToolCall(false);
                 });
             },
@@ -246,7 +248,9 @@ export function useChat({ conversationId, projectId, initialMessages }: UseChatP
                 }
 
                 // Create checkpoints for all branches
-                const checkpoints = await createCheckpointsForAllBranches(editorEngine, content);
+                const scope = lastUserMessage.metadata?.context.find(c=>c.type===MessageContextType.BRANCH && c.clientPage);
+                const checkpoints = await createCheckpointsForAllBranches(editorEngine, content,
+                    clientMode && scope?.type===MessageContextType.BRANCH ? scope : undefined);
 
                 if (checkpoints.length === 0) {
                     return;
@@ -270,7 +274,7 @@ export function useChat({ conversationId, projectId, initialMessages }: UseChatP
                 const checkpointsWithBranchId = [...oldCheckpoints, ...checkpoints].filter(
                     (cp): cp is GitMessageCheckpoint & { branchId: string } => !!cp.branchId
                 );
-                void api.chat.message.updateCheckpoints.mutate({
+                await api.chat.message.updateCheckpoints.mutate({
                     messageId: lastUserMessage.id,
                     checkpoints: checkpointsWithBranchId,
                 });
@@ -298,7 +302,7 @@ export function useChat({ conversationId, projectId, initialMessages }: UseChatP
             };
 
             void cleanupContext();
-            void applyCommit();
+            if (!clientMode || finishReason === 'stop') void applyCommit();
             void processNextQueuedMessage();
         }
     }, [finishReason, conversationId, queuedMessages.length, processNextInQueue]);
@@ -311,7 +315,15 @@ export function useChat({ conversationId, projectId, initialMessages }: UseChatP
         editorEngine.chat.setChatActions(sendMessage);
     }, [editorEngine.chat, sendMessage]);
 
+    async function sendClientTurn(message: ChatMessage, history: ChatMessage[]) {
+        const index = history.findIndex(item => item.id === message.id);
+        setMessages(index < 0 ? history : history.slice(0,index));
+        await streamMessage(message, {body:{chatType:ChatType.EDIT,conversationId,projectId}});
+    }
+
     return {
+        sendClientTurn,
+        setMessages,
         status,
         sendMessage,
         editMessage,

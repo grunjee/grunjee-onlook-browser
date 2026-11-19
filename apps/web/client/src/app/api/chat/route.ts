@@ -1,8 +1,10 @@
+import { claimClientTurn, clientBranch } from './client-turn';
 import { api } from '@/trpc/server';
 import { trackEvent } from '@/utils/analytics/server';
 import { createRootAgentStream } from '@onlook/ai';
 import { toDbMessage } from '@onlook/db';
 import { ChatType, type ChatMessage, type ChatMetadata } from '@onlook/models';
+import { consumeStream } from 'ai';
 import { type NextRequest } from 'next/server';
 import { v4 as uuidv4 } from 'uuid';
 import { checkMessageLimit, decrementUsage, errorHandler, getSupabaseUser, incrementUsage } from './helpers';
@@ -67,10 +69,16 @@ export const streamResponse = async (req: NextRequest, userId: string) => {
         rateLimitId: string | undefined;
     } | null = null;
 
+    let complete: Awaited<ReturnType<typeof claimClientTurn>> = null;
+    let streamFailed = false;
     try {
         const lastUserMessage = messages.findLast((message) => message.role === 'user');
         const traceId = lastUserMessage?.id ?? uuidv4();
 
+        if (lastUserMessage && clientBranch(lastUserMessage.metadata?.context ?? [])) {
+            complete = await claimClientTurn(userId,projectId,conversationId,messages,lastUserMessage);
+            if (!complete) return Response.json({error:'This request already exists or the conversation changed. Reload its saved status.'},{status:409});
+        }
         if (chatType === ChatType.EDIT) {
             usageRecord = await incrementUsage(req, traceId);
         }
@@ -85,6 +93,7 @@ export const streamResponse = async (req: NextRequest, userId: string) => {
         return stream.toUIMessageStreamResponse<ChatMessage>(
             {
                 originalMessages: messages,
+                consumeSseStream: complete ? consumeStream : undefined,
                 generateMessageId: () => uuidv4(),
                 messageMetadata: ({ part }) => {
                     return {
@@ -92,11 +101,15 @@ export const streamResponse = async (req: NextRequest, userId: string) => {
                         conversationId,
                         context: [],
                         checkpoints: [],
-                        finishReason: part.type === 'finish-step' ? part.finishReason : undefined,
+                        finishReason: part.type === 'finish-step' || part.type === 'finish' ? part.finishReason : undefined,
                         usage: part.type === 'finish-step' ? part.usage : undefined,
                     } satisfies ChatMetadata;
                 },
-                onFinish: async ({ messages: finalMessages }) => {
+                onFinish: async ({ messages: finalMessages, responseMessage, isAborted }) => {
+                    if (complete) {
+                        await complete(responseMessage, streamFailed || isAborted);
+                        return;
+                    }
                     const messagesToStore = finalMessages
                         .filter(msg =>
                             (msg.role === 'user' || msg.role === 'assistant')
@@ -108,10 +121,11 @@ export const streamResponse = async (req: NextRequest, userId: string) => {
                         messages: messagesToStore,
                     });
                 },
-                onError: errorHandler,
+                onError: error => { streamFailed = true; return errorHandler(error); },
             }
         );
     } catch (error) {
+        if (complete) await complete(null,true);
         console.error('Error in streamResponse setup', error);
         // If there was an error setting up the stream and we incremented usage, revert it
         if (usageRecord) {

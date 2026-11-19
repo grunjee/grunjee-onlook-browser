@@ -1,4 +1,4 @@
-import { getAstFromCodeblock } from '@onlook/parser';
+import { getClientTextBlock } from '@onlook/parser';
 import { ChatType, type DomElement } from '@onlook/models';
 import {
     MessageContextType,
@@ -250,11 +250,10 @@ export class ChatContext {
     async clientText(oid: string, branchId: string) {
         const highlight = await this.getHighlightContextById(oid, '', false, branchId);
         if (!highlight) return null;
-        const element = getAstFromCodeblock(highlight.content);
-        const child = element?.children[0];
-        if (element?.children.length !== 1 || child?.type !== 'JSXText') return null;
-        const text = child.value.replace(/\s+/g, ' ').trim();
-        return text && text.length <= 2500 ? { ...highlight, displayName: text } : null;
+        const branch=this.editorEngine.branches.getBranchDataById(branchId);
+        const source=await branch?.codeEditor.readFile(highlight.path);
+        const block=typeof source==='string' ? getClientTextBlock(source,oid) : null;
+        return block ? {...highlight,content:block.code,displayName:block.text,start:block.start,end:block.end} : null;
     }
 
     async clientPageContext(frame: FrameData, path: string, highlight: HighlightMessageContext | null) {

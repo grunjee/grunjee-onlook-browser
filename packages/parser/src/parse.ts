@@ -1,6 +1,7 @@
 import { EditorAttributes } from '@onlook/constants';
 
 import type { NodePath, T } from './packages';
+import { getExistingOid } from './ids';
 import { isReactFragment } from './helpers';
 import { generate, parse, t, traverse } from './packages';
 
@@ -21,6 +22,30 @@ export function getAstFromContent(content: string): T.File | null {
         console.error(e);
         return null;
     }
+}
+
+/** Read one static text block from the exact source, including elements on the same line. */
+export function getClientTextBlock(content: string, oid: string) {
+    const ast = getAstFromContent(content);
+    if (!ast) return null;
+    const matches: {text:string;code:string;start:number;end:number}[] = [];
+    let count = 0;
+    traverse(ast,{ JSXElement(path) {
+        const node = path.node;
+        if (getExistingOid(node.openingElement.attributes)?.value !== oid) return;
+        count++;
+        for (let p: NodePath | null = path; p; p=p.parentPath) {
+            if (!p.isJSXElement()) continue;
+            const opening=p.node.openingElement;
+            if (t.isJSXIdentifier(opening.name) && ['form','input','textarea','select','button'].includes(opening.name.name)) return;
+            if (opening.attributes.some(a=>t.isJSXAttribute(a) && ['contentEditable','hidden','dangerouslySetInnerHTML'].includes(String(a.name.name)))) return;
+        }
+        const child=node.children[0];
+        if (node.children.length!==1 || !t.isJSXText(child) || node.start==null || node.end==null || !node.loc) return;
+        const text=child.value.replace(/\s+/g,' ').trim();
+        if (text && text.length<=2500) matches.push({text,code:content.slice(node.start,node.end),start:node.loc.start.line,end:node.loc.end.line});
+    }});
+    return count===1 ? matches[0] ?? null : null;
 }
 
 export function getAstFromCodeblock(code: string, stripIds = false): T.JSXElement | undefined {

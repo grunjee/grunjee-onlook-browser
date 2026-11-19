@@ -17,7 +17,11 @@ export default {async fetch(request,env){
       let action;try{action=JSON.parse(raw)}catch{fail('Invalid request.')}
       const next=transact(state,action,new Date().toISOString(),importSource);if(next===state)return json(next);
       const result=await env.BUCKET.put('desk/v1/'+user+'.json',JSON.stringify(next),{onlyIf:etag?{etagMatches:etag}:new Headers({'if-none-match':'*'}),httpMetadata:{contentType:'application/json'}});
-      if(!result)fail('Another tab saved a change. Open the latest version and try again.',409);
+      if(!result){
+        const latest=(await saved(env,user)).state;
+        if(editRecorded(latest,action)||latest.receipts.includes(action.key))return json(latest);
+        fail('Another tab saved a change. Check the latest preview before sending your draft.',409);
+      }
       return json(next)
     }
     if(read&&request.method==='GET'){
