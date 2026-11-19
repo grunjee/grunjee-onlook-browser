@@ -1,3 +1,7 @@
+## Grunjee Labs desktop browser fork
+
+[Run the bakery workflow and see the milestone 1 results](apps/grunjee-desk/MILESTONE-1.md). The desktop fork starts at upstream browser commit `423e2e924366419e418ee049093872d535eea41a`.
+
 <!-- Improved compatibility of back to top link: See: https://github.com/othneildrew/Best-README-Template/pull/73 -->
 
 <div align="center">

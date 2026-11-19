@@ -1,0 +1,7 @@
+const channel=location.hash.slice(1);
+let selecting=true;
+function tell(data){parent.postMessage({...data,channel},'*')}
+function setTarget(id){document.querySelectorAll('.picked').forEach(e=>e.classList.remove('picked'));const seen=[...document.querySelectorAll('[data-oid]')].filter(e=>getOid(e)===id);if(seen.length===1)seen[0].classList.add('picked')}
+addEventListener('message',e=>{if(e.source!==parent||e.data?.channel!==channel)return;selecting=e.data.mode==='select';document.body.classList.toggle('selecting',selecting);setTarget(e.data.target);for(const el of document.querySelectorAll('[data-oid]')){if(selecting)el.tabIndex=0;else el.removeAttribute('tabindex')}});
+function choose(e){if(!selecting){const a=e.target.closest('a[href^="#"]');if(e.type==='click'&&a){e.preventDefault();document.getElementById(a.getAttribute('href').slice(1))?.scrollIntoView();}return;} if(e.type==='keydown'&&!['Enter',' '].includes(e.key))return;const el=e.target.closest('[data-oid]'); if(!el&&!e.target.closest('a,button'))return;e.preventDefault();e.stopImmediatePropagation();if(el){const target=getOid(el);setTarget(target);tell({type:'pick',target})}}
+document.addEventListener('click',choose,true);document.addEventListener('keydown',choose,true);tell({type:'ready'});

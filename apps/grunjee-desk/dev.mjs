@@ -1,0 +1,11 @@
+import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+import './build.mjs';
+const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..');
+const {default:worker}=await import(path.join(root,'dist/server/index.js'));
+const pool=new Map();
+const BUCKET={async get(k){const o=pool.get(k);return o&&{etag:o.etag,json:async()=>JSON.parse(o.v)}},async put(k,v,opts){const o=pool.get(k),pre=opts.onlyIf;if(pre instanceof Headers?!!o:pre.etagMatches!==o?.etag)return null;const etag=crypto.randomUUID();pool.set(k,{v,etag});return {etag}}};
+const args=process.argv.slice(2);const at=args.indexOf('--port');const port=Number(process.env.PORT||(at>=0?args[at+1]:5173));
+http.createServer(async(req,res)=>{try{const body=[];for await(const b of req)body.push(b);const headers=new Headers(req.headers);headers.set('oai-authenticated-user-id','local-preview');const origin=headers.get('origin')||'http://'+req.headers.host;const url=new URL(req.url,origin);const r=await worker.fetch(new Request(url,{method:req.method,headers,body:['GET','HEAD'].includes(req.method)?undefined:Buffer.concat(body)}),{BUCKET});res.writeHead(r.status,Object.fromEntries(r.headers));res.end(Buffer.from(await r.arrayBuffer()))}catch{res.writeHead(500);res.end('Preview could not load.')}}).listen(port,'0.0.0.0',()=>console.log('Site Desk at port '+port));

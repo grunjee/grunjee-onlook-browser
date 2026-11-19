@@ -1,0 +1,15 @@
+@import "tailwindcss" source(none);
+@source "./page.tsx";
+
+body { background: #fffaf0; color: #3e1f24; font-family: system-ui, sans-serif; }
+.bakery-page { max-width: 76rem; padding: 1.5rem clamp(1.4rem, 5vw, 4rem) 2rem; }
+.bakery-header { padding-bottom: 1rem; border-bottom: 1px solid #ab8f80; gap: 1rem; }
+.bakery-header span:first-child { font: italic 600 1.4rem Georgia, serif; }
+.bakery-header span:last-child { font-size: .875rem; }
+.bakery-intro { padding: clamp(1.5rem, 4vw, 2.6rem) 0; }
+.bakery-intro h1 { max-width: 15ch; font: 500 clamp(2.4rem, 6vw, 4.6rem)/.98 Georgia, serif; letter-spacing: -.05em; }
+.bakery-intro p { max-width: 38ch; margin-top: .9rem; line-height: 1.5; }
+.bakery-hours { grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr)); }
+.bakery-hours > div { border-top: 2px solid #7d3542; padding-top: .75rem; }
+.bakery-hours h2 { font: italic 1.25rem Georgia, serif; color: #763946; margin-bottom: .5rem; }
+.bakery-hours p { font-weight: 600; }
